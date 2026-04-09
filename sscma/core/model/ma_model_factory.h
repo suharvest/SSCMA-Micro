@@ -26,6 +26,7 @@
 #include "ma_model_yolo26.h"
 #include "ma_model_yolo26_pose.h"
 #include "ma_model_yolo26_seg.h"
+#include "ma_model_bisenetv2.h"
 
 namespace ma {
 

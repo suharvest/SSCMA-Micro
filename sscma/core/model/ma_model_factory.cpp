@@ -83,16 +83,21 @@ Model* ModelFactory::create(Engine* engine, size_t algorithm_id) {
                 return new Yolo11Seg(engine);
             }
             [[fallthrough]];
+        case MA_MODEL_TYPE_BISENETV2:
+            if (BiSeNetV2::isValid(engine)) {
+                return new BiSeNetV2(engine);
+            }
+            [[fallthrough]];
         case MA_MODEL_TYPE_YOLO26:
             if (Yolo26::isValid(engine)) {
                 return new Yolo26(engine);
             }
-            break;
+            [[fallthrough]];
         case MA_MODEL_TYPE_YOLO26_POSE:
             if (Yolo26Pose::isValid(engine)) {
                 return new Yolo26Pose(engine);
             }
-            break;
+            [[fallthrough]];
         case MA_MODEL_TYPE_YOLO26_SEG:
             if (Yolo26Seg::isValid(engine)) {
                 return new Yolo26Seg(engine);
