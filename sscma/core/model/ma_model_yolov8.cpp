@@ -127,14 +127,17 @@ ma_err_t YoloV8::postProcessI8() {
                 if (target < 0)
                     continue;
 
-                float score = ma::math::dequantizeValue(max, outputs_[i].quant_param.scale, outputs_[i].quant_param.zero_point);
+                // Class tensor lives at outputs_[i + 3] (grouped layout: 3 box + 3 cls);
+                // box DFL tensor lives at outputs_[i]. Previously these were swapped, producing
+                // NaN coords on INT8 and garbled scores. Match the (correct) Yolo26 layout.
+                float score = ma::math::dequantizeValue(max, outputs_[i + 3].quant_param.scale, outputs_[i + 3].quant_param.zero_point);
 
                 if (score > score_threshold_non_sigmoid) {
                     float rect[4];
                     float before_dfl[dfl_len * 4];
                     offset = j * grid_w + k;
                     for (int b = 0; b < dfl_len * 4; b++) {
-                        before_dfl[b] = ma::math::dequantizeValue(output_box[offset], outputs_[i + 3].quant_param.scale, outputs_[i + 3].quant_param.zero_point);
+                        before_dfl[b] = ma::math::dequantizeValue(output_box[offset], outputs_[i].quant_param.scale, outputs_[i].quant_param.zero_point);
                         offset += grid_l;
                     }
                     compute_dfl(before_dfl, dfl_len, rect);

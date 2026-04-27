@@ -126,14 +126,18 @@ ma_err_t Yolo11::postProcessI8() {
                 if (target < 0)
                     continue;
 
-                float score = ma::math::dequantizeValue(max, outputs_[i * 2].quant_param.scale, outputs_[i * 2].quant_param.zero_point);
+                // Class tensor is outputs_[i*2 + 1]; box DFL tensor is outputs_[i*2].
+                // Previously these were swapped, producing NaN coords on INT8 (exp(huge_dequant)) and
+                // garbled scores that flooded NMS with duplicates. Match the (correct) layout used in
+                // ma_model_yolo26.cpp.
+                float score = ma::math::dequantizeValue(max, outputs_[i * 2 + 1].quant_param.scale, outputs_[i * 2 + 1].quant_param.zero_point);
 
                 if (score > score_threshold_non_sigmoid) {
                     float rect[4];
                     float before_dfl[dfl_len * 4];
                     offset = j * grid_w + k;
                     for (int b = 0; b < dfl_len * 4; b++) {
-                        before_dfl[b] = ma::math::dequantizeValue(output_box[offset], outputs_[i * 2 + 1].quant_param.scale, outputs_[i * 2 + 1].quant_param.zero_point);
+                        before_dfl[b] = ma::math::dequantizeValue(output_box[offset], outputs_[i * 2].quant_param.scale, outputs_[i * 2].quant_param.zero_point);
                         offset += grid_l;
                     }
                     compute_dfl(before_dfl, dfl_len, rect);
