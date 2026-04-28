@@ -174,7 +174,7 @@ ma_err_t YoloV8::postProcessF32() {
         int grid_l          = grid_h * grid_w;
         int stride          = img_.height / grid_h;
         float* output_score = outputs_[i + 3].data.f32;
-        float* output_box   = outputs_[i + 3].data.f32;
+        float* output_box   = outputs_[i].data.f32;
         for (int j = 0; j < grid_h; j++) {
             for (int k = 0; k < grid_w; k++) {
                 int offset = j * grid_w + k;
