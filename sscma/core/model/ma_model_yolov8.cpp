@@ -31,7 +31,12 @@ YoloV8::YoloV8(Engine* p_engine_) : Detector(p_engine_, "YoloV8", MA_MODEL_TYPE_
     int s = w >> 5, m = w >> 4, l = w >> 3;
 
     num_record_ = (s * s + m * m + l * l);
-    num_class_  = outputs_[1].shape.dims[1];
+    // Cls tensor lives at outputs_[3..5] in the grouped (box×3 + cls×3) layout
+    // checked by isValid(). outputs_[1] is the second box DFL tensor with
+    // dims[1]=64 (DFL bins ×4 coords) — using it as num_class_ caused the
+    // postProcess loops to read 64 channels from a (often) 1-channel cls
+    // tensor, producing thousands of false-positives from out-of-bounds reads.
+    num_class_  = outputs_[3].shape.dims[1];
 }
 
 YoloV8::~YoloV8() {}
