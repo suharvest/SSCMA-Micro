@@ -359,6 +359,19 @@ EngineTFLite::~EngineTFLite() {
     #endif
 }
 
+// Reset engine state for memory cleanup (used when switching inference modes)
+// Called before el_aligned_malloc_reset() to clear pointers to elHeap memory
+void EngineTFLite::reset() {
+    if (interpreter != nullptr) {
+        delete interpreter;
+        interpreter = nullptr;
+    }
+    model = nullptr;
+    // Don't delete memory_pool.pool - it's from elHeap which will be reset separately
+    memory_pool.pool = nullptr;
+    memory_pool.size = 0;
+}
+
 el_err_code_t EngineTFLite::init() { return EL_OK; }
 
 el_err_code_t EngineTFLite::init(size_t size) {

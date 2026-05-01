@@ -364,6 +364,9 @@ class EngineTFLite final : public base::Engine {
     el_err_code_t init(void* pool, size_t size) override;
     operator bool() const override;
     el_err_code_t run() override;
+    
+    // Reset engine state for memory cleanup (used when switching inference modes)
+    void reset();
 
 #ifdef CONFIG_EL_FILESYSTEM
     el_err_code_t load_model(const char* model_path) override;

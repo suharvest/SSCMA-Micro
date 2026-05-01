@@ -83,19 +83,26 @@ EL_ATTR_WEAK void* el_malloc(size_t size) {
 #endif
 }
 
+/* elHeap: bump allocator for tensor arenas and large buffers.
+ * Size must match CM55M_S_EL_ALLOC in the linker script. */
+constexpr static const size_t elHeapSize = 1712 * 1024;
+static uint8_t                elHeap[elHeapSize]{};
+static uint8_t*               elHeapCp = elHeap;
+
 EL_ATTR_WEAK void* el_aligned_malloc_once(size_t align, size_t size) {
-    constexpr static const size_t elHeapSize = 1112 * 1024;
-    static uint8_t                elHeap[elHeapSize]{};
-    static uint8_t*               cp      = elHeap;
-    size_t                        pv      = reinterpret_cast<size_t>(cp);
+    size_t                        pv      = reinterpret_cast<size_t>(elHeapCp);
     size_t                        of      = align - (pv % align);
-    void*                         aligned = cp + of;
+    void*                         aligned = elHeapCp + of;
     size_t                        rq      = size + of;
-    size_t                        rm      = elHeapSize - static_cast<size_t>(cp - elHeap);
+    size_t                        rm      = elHeapSize - static_cast<size_t>(elHeapCp - elHeap);
     if (rq > rm) [[unlikely]]
         return nullptr;
-    cp += rq;
+    elHeapCp += rq;
     return aligned;
+}
+
+EL_ATTR_WEAK void el_aligned_malloc_reset(void) {
+    elHeapCp = elHeap;
 }
 
 EL_ATTR_WEAK void* el_calloc(size_t nmemb, size_t size) {
