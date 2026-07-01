@@ -33,8 +33,19 @@ void set_model(const std::string& cmd, uint8_t model_id, void* caller, bool call
     if (ret != EL_OK) [[unlikely]]
         goto ModelReply;
 
+    // reset the elHeap bump cursor before allocating the model arena so it
+    // always fits: face mode consumes ~952KB and does not reset on exit, so
+    // the first set_model here would otherwise fail el_aligned_malloc_once.
+    el_aligned_malloc_reset();
+
     // allocate tensor arena once (memset to 0 every time)
     static auto* tensor_arena = el_aligned_malloc_once(32, CONFIG_SSCMA_TENSOR_ARENA_SIZE);
+    // null-guard: if the arena could not be allocated, bail out instead of
+    // memset(nullptr, ...) which HardFaults -> watchdog reset.
+    if (tensor_arena == nullptr) [[unlikely]] {
+        ret = EL_ENOMEM;
+        goto ModelError;
+    }
     std::memset(tensor_arena, 0, CONFIG_SSCMA_TENSOR_ARENA_SIZE);
 
     // init engine with tensor arena
