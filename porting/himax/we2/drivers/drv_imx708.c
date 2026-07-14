@@ -1,6 +1,10 @@
 #include "drv_imx708.h"
 
+#include <math.h>
+
 #include "drv_common.h"
+#include "hx_drv_swreg_aon.h"
+#include "driver_interface.h"
 #include "drv_shared_cfg.h"
 
 #define SENSORDPLIB_SENSOR_IMX708 (SENSORDPLIB_SENSOR_HM2130)
@@ -209,12 +213,12 @@ static void set_mipi_csirx_enable() {
 static void set_mipi_csirx_disable() {
     EL_LOGD("MIPI CSI Disable");
 
-    volatile uint32_t* dphy_reg                  = CSIRX_DPHY_REG;
-    volatile uint32_t* csi_static_cfg_reg        = (CSIRX_REGS_BASE + 0x08);
-    volatile uint32_t* csi_dphy_lane_control_reg = (CSIRX_REGS_BASE + 0x40);
-    volatile uint32_t* csi_stream0_control_reg   = (CSIRX_REGS_BASE + 0x100);
-    volatile uint32_t* csi_stream0_data_cfg      = (CSIRX_REGS_BASE + 0x108);
-    volatile uint32_t* csi_stream0_cfg_reg       = (CSIRX_REGS_BASE + 0x10C);
+    volatile uint32_t* dphy_reg                  = (volatile uint32_t*)CSIRX_DPHY_REG;
+    volatile uint32_t* csi_static_cfg_reg        = (volatile uint32_t*)(CSIRX_REGS_BASE + 0x08);
+    volatile uint32_t* csi_dphy_lane_control_reg = (volatile uint32_t*)(CSIRX_REGS_BASE + 0x40);
+    volatile uint32_t* csi_stream0_control_reg   = (volatile uint32_t*)(CSIRX_REGS_BASE + 0x100);
+    volatile uint32_t* csi_stream0_data_cfg      = (volatile uint32_t*)(CSIRX_REGS_BASE + 0x108);
+    volatile uint32_t* csi_stream0_cfg_reg       = (volatile uint32_t*)(CSIRX_REGS_BASE + 0x10C);
 
     sensordplib_csirx_disable();
 
@@ -473,8 +477,8 @@ el_err_code_t drv_imx708_init(uint16_t width, uint16_t height) {
     // DMA
     _reset_all_wdma_buffer();
 
-    _frame.data = _wdma3_baseaddr;
-    _jpeg.data  = _wdma2_baseaddr;
+    _frame.data = (uint8_t*)_wdma3_baseaddr;
+    _jpeg.data  = (uint8_t*)_wdma2_baseaddr;
 
     EL_LOGD("wdma1[%x], wdma2[%x], wdma3[%x], jpg_sz[%x]",
             _wdma1_baseaddr,
@@ -553,7 +557,7 @@ el_err_code_t drv_imx708_init(uint16_t width, uint16_t height) {
     sensordplib_retrigger_capture();
 
     if (_is_version_c) {
-        auto last_time = el_get_time_ms();
+        uint32_t last_time = el_get_time_ms();
         while (!_frame_ready) {
             el_sleep(3);
             if (el_get_time_ms() - last_time > 1000) {

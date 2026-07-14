@@ -50,6 +50,8 @@ void* el_malloc(size_t size);
 
 void* el_aligned_malloc_once(size_t align, size_t size);
 
+void el_aligned_malloc_reset(void);
+
 void* el_calloc(size_t nmemb, size_t size);
 
 void el_free(void* ptr);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdio>
 #include <forward_list>
 
 #include "callback/action.hpp"
@@ -17,6 +18,21 @@
 #include "hooks.hpp"
 #include "static_resource.hpp"
 #include "types.hpp"
+#include "porting/el_misc.h"  // For el_aligned_malloc_reset()
+
+#ifdef SSCMA_FACE
+#include "face_invoke.hpp"
+extern "C" {
+#include <ethosu_driver.h>
+#include "cvapp_face_embedding.h"
+#include "common_config.h"
+}
+
+namespace edgelab::porting {
+extern struct ethosu_driver _ethosu_drv;
+}
+#endif
+
 
 namespace sscma::main_task {
 
@@ -56,6 +72,11 @@ void init_static_resource() {
 
 void register_commands() {
     EL_LOGI("[SSCMA] registering AT commands...");
+
+#ifdef SSCMA_FACE
+    /* Face mode flag - used by INVOKE command to switch between object detection and face recognition */
+    static bool face_mode_enabled = false;
+#endif
 
     static_resource->instance->register_cmd(
       "HELP?", "List available commands", "", [](std::vector<std::string> argv, void* caller) {
@@ -234,6 +255,21 @@ void register_commands() {
       "Invoke for N times (-1 for infinity loop)",
       "N_TIMES,DIFFERED,RESULT_ONLY",
       [](std::vector<std::string> argv, void* caller) {
+#ifdef SSCMA_FACE
+          if (face_mode_enabled) {
+              // Face mode: use FaceInvoke
+              static_resource->executor->add_task([cmd         = std::move(argv[0]),
+                                                   n_times     = std::atoi(argv[1].c_str()),
+                                                   differed    = std::atoi(argv[2].c_str()),
+                                                   result_only = std::atoi(argv[3].c_str()),
+                                                   caller](const std::atomic<bool>&) {
+                  static_resource->current_task_id.fetch_add(1, std::memory_order_seq_cst);
+                  FaceInvoke::create(cmd, n_times, differed != 0, result_only != 0, caller)->run();
+              });
+              return EL_OK;
+          }
+#endif
+          // Object detection mode: use standard Invoke
           // Load model if not
           if (!*(static_resource->engine)) {
               set_model("MODEL", static_resource->current_model_id, caller, false);
@@ -452,6 +488,166 @@ void register_commands() {
           });
           return EL_OK;
       });
+
+#ifdef SSCMA_FACE
+    /* Face mode control command with proper memory cleanup for mode switching */
+    static_resource->instance->register_cmd(
+      "FACE", "Set face recognition mode (1=enable, 0=disable)", "ENABLE",
+      [](std::vector<std::string> argv, void* caller) {
+          int enable = std::atoi(argv[1].c_str());
+          bool new_mode = (enable != 0);
+
+// Mode switch only changes the flag. Memory/model initialization
+           // is deferred to FaceInvoke when INVOKE is called. This avoids
+           // double reset() calls (FACE command + FaceInvoke::initFaceModels).
+           if (face_mode_enabled != new_mode) {
+               // Stop any running inference task
+               if (static_resource->is_ready.load()) {
+                   static_resource->executor->try_stop_task();
+               }
+               EL_LOGI("[SSCMA] Face mode flag set to %s", new_mode ? "true" : "false");
+           }
+
+          face_mode_enabled = new_mode;
+          std::string reply = concat_strings(
+              "\r{\"type\": 0, \"name\": \"FACE\", \"code\": 0, \"data\": {\"face_mode\": ",
+              face_mode_enabled ? "true" : "false",
+              "}}\n");
+          static_cast<Transport*>(caller)->send_bytes(reply.c_str(), reply.size());
+          EL_LOGI("[SSCMA] Face mode %s", face_mode_enabled ? "enabled" : "disabled");
+          return EL_OK;
+      });
+
+    static_resource->instance->register_cmd(
+      "FACE?", "Get face recognition mode status", "",
+      [](std::vector<std::string> argv, void* caller) {
+          std::string reply = concat_strings(
+              "\r{\"type\": 0, \"name\": \"FACE?\", \"code\": 0, \"data\": {\"face_mode\": ",
+              face_mode_enabled ? "true" : "false",
+              "}}\n");
+          static_cast<Transport*>(caller)->send_bytes(reply.c_str(), reply.size());
+          return EL_OK;
+      });
+
+    static_resource->instance->register_cmd(
+      "FACEDBG?", "", "",
+      [](std::vector<std::string>, void* caller) {
+          face_debug_tensors_t tensors = {};
+          int ret = cv_face_embedding_get_debug_tensors(&tensors);
+          if (ret != 0) {
+              std::string reply = concat_strings(
+                  "\r{\"type\": 0, \"name\": \"FACEDBG?\", \"code\": ",
+                  std::to_string(ret),
+                  ", \"data\": {\"valid\": false}}\n");
+              static_cast<Transport*>(caller)->send_bytes(reply.c_str(), reply.size());
+              return EL_OK;
+          }
+
+          auto dims_json = [](const int32_t* dims, int32_t count) {
+              std::string s = "[";
+              for (int i = 0; i < count; i++) {
+                  if (i) s += ", ";
+                  s += std::to_string(dims[i]);
+              }
+              s += "]";
+              return s;
+          };
+          auto b64 = [](const uint8_t* data, uint32_t size) {
+              std::string out((((size + 2u) / 3u) << 2u), '\0');
+              if (size > 0) {
+                  el_base64_encode(data, size, out.data());
+              }
+              return out;
+          };
+
+          std::string input_b64;
+          if (tensors.emb_output_bytes <= 32768u) {
+              input_b64 = b64(tensors.emb_input_data, tensors.emb_input_bytes);
+          }
+          std::string output_b64 = b64(tensors.emb_output_data, tensors.emb_output_bytes);
+          std::string reply = concat_strings(
+              "\r{\"type\": 0, \"name\": \"FACEDBG?\", \"code\": 0, \"data\": {",
+              "\"valid\": true, ",
+              "\"emb_input\": {\"type\": ", std::to_string(tensors.emb_input_type),
+              ", \"bytes\": ", std::to_string(tensors.emb_input_bytes),
+              ", \"zp\": ", std::to_string(tensors.emb_input_zp),
+              ", \"scale_nano\": ", std::to_string((int32_t)(tensors.emb_input_scale * 1000000000.0f)),
+              ", \"dims\": ", dims_json(tensors.emb_input_dims, tensors.emb_input_dims_count),
+              ", \"data_b64\": \"", input_b64, "\"}, ",
+              "\"emb_output\": {\"type\": ", std::to_string(tensors.emb_output_type),
+              ", \"bytes\": ", std::to_string(tensors.emb_output_bytes),
+              ", \"zp\": ", std::to_string(tensors.emb_output_zp),
+              ", \"scale_nano\": ", std::to_string((int32_t)(tensors.emb_output_scale * 1000000000.0f)),
+              ", \"dims\": ", dims_json(tensors.emb_output_dims, tensors.emb_output_dims_count),
+              ", \"data_b64\": \"", output_b64, "\"}",
+              "}}\n");
+          static_cast<Transport*>(caller)->send_bytes(reply.c_str(), reply.size());
+          return EL_OK;
+      });
+
+    static_resource->instance->register_cmd(
+      "FACEEMBTEST", "", "SEED",
+      [](std::vector<std::string> argv, void* caller) {
+          uint32_t seed = 0;
+          if (argv.size() > 1) {
+              seed = (uint32_t)std::strtoul(argv[1].c_str(), nullptr, 0);
+          }
+          static_resource->executor->add_task([caller, seed](const std::atomic<bool>&) {
+              int ret = cv_face_embedding_init(true, true, FACE_DETECT_FLASH_ADDR, FACE_EMBEDDING_FLASH_ADDR);
+              if (ret == 0) {
+                  ret = cv_face_embedding_run_fixed_input_test(seed);
+              }
+              char reply[64] = {};
+              int len = std::snprintf(reply, sizeof(reply), "\r{\"type\":0,\"name\":\"FACEEMBTEST\",\"code\":%d}\n", ret);
+              if (len > 0) {
+                  static_cast<Transport*>(caller)->send_bytes(reply, std::min((size_t)len, sizeof(reply) - 1u));
+              }
+          });
+          return EL_OK;
+      });
+
+    static_resource->instance->register_cmd(
+      "FACEEMBFLASH", "", "OFFSET,BYTES",
+      [](std::vector<std::string> argv, void* caller) {
+          uint32_t offset = FACE_EMB_TEST_INPUT_FLASH_OFFSET;
+          uint32_t bytes = 0;
+          if (argv.size() > 1) {
+              offset = (uint32_t)std::strtoul(argv[1].c_str(), nullptr, 0);
+          }
+          if (argv.size() > 2) {
+              bytes = (uint32_t)std::strtoul(argv[2].c_str(), nullptr, 0);
+          }
+          static_resource->executor->add_task([caller, offset, bytes](const std::atomic<bool>&) {
+              int ret = cv_face_embedding_init(true, true, FACE_DETECT_FLASH_ADDR, FACE_EMBEDDING_FLASH_ADDR);
+              if (ret == 0) {
+                  ret = cv_face_embedding_run_flash_input_test(offset, bytes);
+              }
+              char reply[64] = {};
+              int len = std::snprintf(reply, sizeof(reply), "\r{\"type\":0,\"name\":\"FACEEMBFLASH\",\"code\":%d}\n", ret);
+              if (len > 0) {
+                  static_cast<Transport*>(caller)->send_bytes(reply, std::min((size_t)len, sizeof(reply) - 1u));
+              }
+          });
+          return EL_OK;
+      });
+
+    static_resource->instance->register_cmd(
+      "FACECFG", "Set face debug/runtime config", "CONF_MILLI",
+      [](std::vector<std::string> argv, void* caller) {
+          int conf_milli = std::atoi(argv[1].c_str());
+          if (conf_milli < 10 || conf_milli > 1000) {
+              conf_milli = (int)(FACE_CONF_THRESHOLD * 1000.0f);
+          }
+          float conf = (float)conf_milli / 1000.0f;
+          cv_face_embedding_set_conf_threshold(conf);
+          std::string reply = concat_strings(
+              "\r{\"type\": 0, \"name\": \"FACECFG\", \"code\": 0, \"data\": {\"conf_milli\": ",
+              std::to_string(conf_milli),
+              "}}\n");
+          static_cast<Transport*>(caller)->send_bytes(reply.c_str(), reply.size());
+          return EL_OK;
+      });
+#endif
 }
 
 void wait_for_inputs(void*) {

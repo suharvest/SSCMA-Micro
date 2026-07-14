@@ -1,5 +1,6 @@
 #include "drv_hm0360.h"
 
+#include <math.h>
 #include "drv_common.h"
 #include "drv_shared_cfg.h"
 
@@ -135,8 +136,8 @@ el_err_code_t drv_hm0360_init(uint16_t width, uint16_t height) {
     // DMA
     _reset_all_wdma_buffer();
 
-    _frame.data = _wdma3_baseaddr;
-    _jpeg.data  = _wdma2_baseaddr;
+    _frame.data = (uint8_t*)_wdma3_baseaddr;
+    _jpeg.data  = (uint8_t*)_wdma2_baseaddr;
 
     EL_LOGD("WD1[%x], WD2_J[%x], WD3_RAW[%x], JPAuto[%x]",
             _wdma1_baseaddr,
