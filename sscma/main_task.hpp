@@ -632,6 +632,81 @@ void register_commands() {
       });
 
     static_resource->instance->register_cmd(
+      "FACEFRAME", "", "OFFSET,W,H",
+      [](std::vector<std::string> argv, void* caller) {
+          // The repl tokenizer stops at the first non-isxdigit char, so a "0x"
+          // prefix would truncate to "0". Callers must pass decimal.
+          uint32_t offset = 0;
+          uint32_t w      = 0;
+          uint32_t h      = 0;
+          if (argv.size() > 3) {
+              offset = (uint32_t)std::strtoul(argv[1].c_str(), nullptr, 0);
+              w      = (uint32_t)std::strtoul(argv[2].c_str(), nullptr, 0);
+              h      = (uint32_t)std::strtoul(argv[3].c_str(), nullptr, 0);
+          }
+          static_resource->executor->add_task([caller, offset, w, h](const std::atomic<bool>&) {
+              struct_algoResult     alg = {};
+              face_embedding_msg_t  emb = {};
+              int ret = cv_face_embedding_init(true, true, FACE_DETECT_FLASH_ADDR, FACE_EMBEDDING_FLASH_ADDR);
+              if (ret == 0) {
+                  ret = cv_face_embedding_run_flash_frame_test(offset, w, h, &alg, &emb);
+              }
+              auto i32 = [](float v, float mult) { return std::to_string((int32_t)(v * mult + (v < 0 ? -0.5f : 0.5f))); };
+              std::string lm = "[";
+              for (int i = 0; i < 5; i++) {
+                  if (i) lm += ", ";
+                  lm += "[" + i32(emb.landmarks[i].x, 100.0f) + ", " + i32(emb.landmarks[i].y, 100.0f) + "]";
+              }
+              lm += "]";
+              std::string ev = "[";
+              for (int i = 0; i < EMBEDDING_OUTPUT_DIM; i++) {
+                  if (i) ev += ", ";
+                  ev += i32(emb.embedding[i], 10000.0f);
+              }
+              ev += "]";
+              std::string reply = concat_strings(
+                "\r{\"type\": 0, \"name\": \"FACEFRAME\", \"code\": ", std::to_string(ret),
+                ", \"data\": {\"faces\": ", std::to_string(alg.num_tracked_human_targets),
+                ", \"score_x1e4\": ", i32(emb.confidence, 10000.0f),
+                ", \"quality_x1e4\": ", i32(emb.quality, 10000.0f),
+                ", \"bbox\": [", std::to_string(emb.bbox.x), ", ", std::to_string(emb.bbox.y), ", ",
+                                 std::to_string(emb.bbox.width), ", ", std::to_string(emb.bbox.height), "]",
+                ", \"pose_x1e2\": [", i32(emb.pose.yaw, 100.0f), ", ", i32(emb.pose.pitch, 100.0f), ", ",
+                                      i32(emb.pose.roll, 100.0f), "]",
+                ", \"landmarks_x1e2\": ", lm,
+                ", \"embedding_x1e4\": ", ev,
+                "}}\n");
+              static_cast<Transport*>(caller)->send_bytes(reply.c_str(), reply.size());
+          });
+          return EL_OK;
+      });
+
+    static_resource->instance->register_cmd(
+      "FACECROP?", "", "",
+      [](std::vector<std::string>, void* caller) {
+          const uint8_t* crop  = nullptr;
+          uint32_t       bytes = 0;
+          int            ret   = cv_face_embedding_get_aligned_crop(&crop, &bytes);
+          if (ret != 0 || crop == nullptr || bytes == 0) {
+              std::string reply = concat_strings(
+                "\r{\"type\": 0, \"name\": \"FACECROP?\", \"code\": ", std::to_string(ret),
+                ", \"data\": {\"valid\": false}}\n");
+              static_cast<Transport*>(caller)->send_bytes(reply.c_str(), reply.size());
+              return EL_OK;
+          }
+          std::string b64((((bytes + 2u) / 3u) << 2u), '\0');
+          el_base64_encode(crop, bytes, b64.data());
+          std::string reply = concat_strings(
+            "\r{\"type\": 0, \"name\": \"FACECROP?\", \"code\": 0, \"data\": {\"valid\": true",
+            ", \"w\": ", std::to_string(EMBEDDING_INPUT_WIDTH),
+            ", \"h\": ", std::to_string(EMBEDDING_INPUT_HEIGHT),
+            ", \"format\": \"RGB888\", \"bytes\": ", std::to_string(bytes),
+            ", \"data_b64\": \"", b64, "\"}}\n");
+          static_cast<Transport*>(caller)->send_bytes(reply.c_str(), reply.size());
+          return EL_OK;
+      });
+
+    static_resource->instance->register_cmd(
       "FACECFG", "Set face debug/runtime config", "CONF_MILLI",
       [](std::vector<std::string> argv, void* caller) {
           int conf_milli = std::atoi(argv[1].c_str());
