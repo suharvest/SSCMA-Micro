@@ -116,7 +116,15 @@ el_err_code_t CameraWE2::init(SensorOptIdType opt_id) {
 #ifdef CONFIG_EL_BOARD_SENSECAP_WATCHER
     switch (opt_id & 0x0FFF) {
     case 0:
-        ret                   = _drv_cam_init(240, 240);
+        /* Face recognition boots at opt 0 (the stored default). 240x240 leaves
+         * a ~50px face that the alignment must upscale ~1.5x into a blurry
+         * 112x112 crop; 480x480 gives a ~120px face that downscales into a
+         * sharp crop, and the aligned crop's Laplacian sharpness rises ~8x on
+         * device. 640x480 was rejected: the fixed 160x160 SCRFD input then
+         * downsamples 4x and detection drops to ~6%. Mapping opt 0 here (rather
+         * than the stored-opt default) guarantees 480 regardless of what the
+         * flash storage holds. */
+        ret                   = _drv_cam_init(480, 480);
         this->_current_opt_id = 0;
         break;
     case 1:
