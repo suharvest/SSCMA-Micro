@@ -16,8 +16,19 @@
 #include "core/utils/el_cv.h"
 #include "definations.hpp"
 #include "porting/el_device.h"
+#ifdef SSCMA_PEOPLE_COUNTING
+#include "sscma/extension/counter/pc_counter.hpp"
+#endif
 #include "traits.hpp"
 #include "types.hpp"
+
+/* CM55M_S_APP_ROM is 256 KB and the sscma app was already at 99.50% of it
+ * before the people counting extension was added. The code below is glue: it is
+ * dominated by camera / NN / string calls, and it is instantiated once per
+ * algorithm type, so building it for size instead of speed buys several KB of
+ * ROM at no measurable runtime cost. */
+#pragma GCC push_options
+#pragma GCC optimize("Os")
 
 namespace sscma::utility {
 
@@ -153,6 +164,9 @@ decltype(auto) sensor_info_2_json_str(const el_sensor_info_t& sensor_info, Devic
 decltype(auto) results_2_json_str(const std::forward_list<el_box_t>& results) {
     std::string ss;
     const char* delim = "";
+#ifdef SSCMA_PEOPLE_COUNTING
+    int index = 0;
+#endif
 
     ss = "\"boxes\": [";
     for (const auto& box : results) {
@@ -169,8 +183,17 @@ decltype(auto) results_2_json_str(const std::forward_list<el_box_t>& results) {
                              std::to_string(box.score),
                              ", ",
                              std::to_string(box.target),
+#ifdef SSCMA_PEOPLE_COUNTING
+                             // track_id is appended as a seventh field
+                             // (-1 when the track is not confirmed yet)
+                             ", ",
+                             std::to_string(sscma::extension::counter::pc_counter().box_track_id(index)),
+#endif
                              "]");
         delim = ", ";
+#ifdef SSCMA_PEOPLE_COUNTING
+        ++index;
+#endif
     }
     ss += "]";
 
@@ -388,6 +411,14 @@ decltype(auto) algorithm_results_2_json_str(std::shared_ptr<AlgorithmType> algor
                                   "], ",
                                   results_2_json_str(algorithm->get_results()))};
 
+#ifdef SSCMA_PEOPLE_COUNTING
+    if constexpr (std::is_same<typename std::decay<decltype(algorithm->get_results())>::type,
+                               std::forward_list<el_box_t>>::value) {
+        ss += ", ";
+        ss += sscma::extension::counter::pc_counter().counts_json();
+    }
+#endif
+
     return ss;
 }
 
@@ -504,3 +535,5 @@ decltype(auto) in6_info_2_json_str(const in6_info_t& config) {
 }
 
 }  // namespace sscma::utility
+
+#pragma GCC pop_options

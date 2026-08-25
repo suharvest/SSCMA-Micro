@@ -7,6 +7,9 @@
 #include "callback/action.hpp"
 #include "callback/algorithm.hpp"
 #include "callback/common.hpp"
+#ifdef SSCMA_PEOPLE_COUNTING
+#include "callback/counter.hpp"
+#endif
 #include "callback/info.hpp"
 #include "callback/invoke.hpp"
 #include "callback/kv.hpp"
@@ -292,6 +295,37 @@ void register_commands() {
           });
           return EL_OK;
       });
+
+#ifdef SSCMA_PEOPLE_COUNTING
+    /* ---------------- people counting ---------------- */
+    /* one lambda expression instantiated seven times: every AT+CNT* command
+     * shares the same closure type, so the executor task template is emitted
+     * once (the app sits at ~99.5% of CM55M_S_APP_ROM) */
+    counter_load_config();
+    {
+        auto reg = [](const char* cmd, const char* desc, const char* args, uint8_t kind) {
+            static_resource->instance->register_cmd(
+              cmd, desc, args, [kind](std::vector<std::string> argv, void* caller) {
+                  static_resource->executor->add_task(
+                    [argv = std::move(argv), caller, kind](const std::atomic<bool>&) {
+                        counter_cmd(argv, caller, kind);
+                    });
+                  return EL_OK;
+              });
+        };
+        reg("CNTLINE", "Set a counting line, normalised 0..1000", "IDX,X1,Y1,X2,Y2", PC_CMD_SET_LINE);
+        reg("CNTLINE?", "Get counting lines", "", PC_CMD_GET_LINE);
+        reg("CNTROI",
+            "Set a counting region (quadrilateral), normalised 0..1000",
+            "IDX,X1,Y1,X2,Y2,X3,Y3,X4,Y4",
+            PC_CMD_SET_ROI);
+        reg("CNTROI?", "Get counting regions", "", PC_CMD_GET_ROI);
+        reg("CNTCFG", "Set tracker config", "IOU_Q10,MAX_MISS,MIN_HITS,ANCHOR_MODE", PC_CMD_SET_CFG);
+        reg("CNTCFG?", "Get tracker config", "", PC_CMD_GET_CFG);
+        reg("CNTRST", "Reset all counters, keeps the configuration", "", PC_CMD_RESET);
+    }
+
+#endif  // SSCMA_PEOPLE_COUNTING
 
 #if SSCMA_CFG_ENABLE_ACTION
     // Note:

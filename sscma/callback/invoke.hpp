@@ -8,11 +8,22 @@
 
 #include "core/algorithm/el_algorithm_delegate.h"
 #include "extension/contents_export.hpp"
+#ifdef SSCMA_PEOPLE_COUNTING
+#include "sscma/extension/counter/pc_counter.hpp"
+#endif
 #include "extension/results_filter.hpp"
 #include "sscma/definations.hpp"
 #include "sscma/static_resource.hpp"
 #include "sscma/traits.hpp"
 #include "sscma/utility.hpp"
+
+/* CM55M_S_APP_ROM is 256 KB and the sscma app was already at 99.50% of it
+ * before the people counting extension was added. The code below is glue: it is
+ * dominated by camera / NN / string calls, and it is instantiated once per
+ * algorithm type, so building it for size instead of speed buys several KB of
+ * ROM at no measurable runtime cost. */
+#pragma GCC push_options
+#pragma GCC optimize("Os")
 
 namespace sscma::callback {
 
@@ -449,6 +460,12 @@ class Invoke final : public std::enable_shared_from_this<Invoke> {
         if (!is_everything_ok()) [[unlikely]]
             goto Err;
 
+#ifdef SSCMA_PEOPLE_COUNTING
+        // people counting: tracker + line/region counters, resolution taken from
+        // the live frame (never hard coded); a no-op for non box results
+        sscma::extension::counter::pc_on_results(algorithm->get_results(), frame.width, frame.height);
+#endif
+
 #if SSCMA_CFG_ENABLE_CONTENTS_EXPORT
         if (_contents_export && _exporter) [[likely]] {
             _exporter->cache_result(concat_strings("\r{\"type\": 1, \"name\": \"",
@@ -625,3 +642,5 @@ class Invoke final : public std::enable_shared_from_this<Invoke> {
 };
 
 }  // namespace sscma::callback
+
+#pragma GCC pop_options
