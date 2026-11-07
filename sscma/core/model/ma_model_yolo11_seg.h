@@ -16,6 +16,7 @@ private:
     ma_tensor_t protos_;
     int32_t num_record_;
     int32_t num_class_;
+    std::vector<float> cell_max_f32_;
 
 protected:
     ma_err_t postprocess() override;

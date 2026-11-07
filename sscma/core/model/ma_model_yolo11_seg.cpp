@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <forward_list>
+#include <math.h>
 #include <numeric>
 #include <utility>
 #include <vector>
@@ -87,22 +88,33 @@ ma_err_t Yolo11Seg::postProcessF32() {
 
     std::forward_list<ma_bbox_ext_t> multi_level_bboxes;
     auto* data = bboxes_.data.f32;
+
+    // Per-record max over classes, one class plane at a time: the planes are
+    // contiguous, so this reads memory sequentially instead of striding
+    // num_record_ floats per class for every record.
+    const float* scores = data + num_record_ * 4;
+    cell_max_f32_.assign(num_record_, -INFINITY);
+    float* cell_max = cell_max_f32_.data();
+    for (int c = 0; c < num_class_; c++) {
+        const float* plane = scores + num_record_ * c;
+        for (decltype(num_record_) n = 0; n < num_record_; n++) {
+            cell_max[n] = plane[n] > cell_max[n] ? plane[n] : cell_max[n];
+        }
+    }
+
     for (decltype(num_record_) i = 0; i < num_record_; ++i) {
 
-        float max  = threshold_score_;
-        int target = -1;
-
-        for (int c = 0; c < num_class_; c++) {
-            float score = data[i + num_record_ * (4 + c)];
-            if (score < max) [[likely]] {
-                continue;
-            }
-            max    = score;
-            target = c;
-        }
-
-        if (target < 0)
+        // Kept when some class score is >= threshold_score_, as before.
+        if (cell_max[i] < threshold_score_)
             continue;
+
+        // The last class holding the maximum, as the per-record scan picked.
+        int target = num_class_ - 1;
+        while (scores[num_record_ * target + i] != cell_max[i]) {
+            target--;
+        }
+        // The score at target, as the scan kept it (cell_max[i] can differ in the sign of a zero).
+        float max = scores[num_record_ * target + i];
 
         float x = data[i];
         float y = data[i + num_record_];

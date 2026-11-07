@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <climits>
 #include <forward_list>
 #include <math.h>
 #include <vector>
@@ -114,23 +115,23 @@ ma_err_t YoloV8::postProcessI8() {
         int stride           = img_.height / grid_h;
         int8_t* output_score = outputs_[i + 3].data.s8;
         int8_t* output_box   = outputs_[i].data.s8;
+
+        // Per-cell max over classes, one class plane at a time: the planes are
+        // contiguous, so this reads memory sequentially instead of striding
+        // grid_l bytes per class for every cell.
+        cell_max_s8_.assign(grid_l, INT8_MIN);
+        int8_t* cell_max = cell_max_s8_.data();
+        for (int c = 0; c < num_class_; c++) {
+            const int8_t* plane = output_score + c * grid_l;
+            for (int n = 0; n < grid_l; n++) {
+                cell_max[n] = plane[n] > cell_max[n] ? plane[n] : cell_max[n];
+            }
+        }
+
         for (int j = 0; j < grid_h; j++) {
             for (int k = 0; k < grid_w; k++) {
                 int offset = j * grid_w + k;
-                int target = -1;
-                int8_t max = -128;
-                for (int c = 0; c < num_class_; c++) {
-                    int8_t score = output_score[offset];
-                    offset += grid_l;
-                    if (score < max) [[likely]] {
-                        continue;
-                    }
-                    max    = score;
-                    target = c;
-                }
-
-                if (target < 0)
-                    continue;
+                int8_t max = cell_max[offset];
 
                 // Class tensor lives at outputs_[i + 3] (grouped layout: 3 box + 3 cls);
                 // box DFL tensor lives at outputs_[i]. Previously these were swapped, producing
@@ -138,9 +139,14 @@ ma_err_t YoloV8::postProcessI8() {
                 float score = ma::math::dequantizeValue(max, outputs_[i + 3].quant_param.scale, outputs_[i + 3].quant_param.zero_point);
 
                 if (score > score_threshold_non_sigmoid) {
+                    // The last class holding the maximum, as the per-cell scan picked.
+                    int target = num_class_ - 1;
+                    while (output_score[target * grid_l + offset] != max) {
+                        target--;
+                    }
+
                     float rect[4];
                     float before_dfl[dfl_len * 4];
-                    offset = j * grid_w + k;
                     for (int b = 0; b < dfl_len * 4; b++) {
                         before_dfl[b] = ma::math::dequantizeValue(output_box[offset], outputs_[i].quant_param.scale, outputs_[i].quant_param.zero_point);
                         offset += grid_l;
@@ -183,29 +189,31 @@ ma_err_t YoloV8::postProcessF32() {
         int stride          = img_.height / grid_h;
         float* output_score = outputs_[i + 3].data.f32;
         float* output_box   = outputs_[i].data.f32;
+
+        // Per-cell max over classes, one class plane at a time (see postProcessI8).
+        cell_max_f32_.assign(grid_l, -INFINITY);
+        float* cell_max = cell_max_f32_.data();
+        for (int c = 0; c < num_class_; c++) {
+            const float* plane = output_score + c * grid_l;
+            for (int n = 0; n < grid_l; n++) {
+                cell_max[n] = plane[n] > cell_max[n] ? plane[n] : cell_max[n];
+            }
+        }
+
         for (int j = 0; j < grid_h; j++) {
             for (int k = 0; k < grid_w; k++) {
                 int offset = j * grid_w + k;
-                int target = -1;
-                float max  = score_threshold_non_sigmoid;
-                for (int c = 0; c < num_class_; c++) {
-                    float score = output_score[offset];
-                    offset += grid_l;
-                    if (score < max) [[likely]] {
-                        continue;
-                    }
-                    max    = score;
-                    target = c;
-                }
-
-                if (target < 0)
-                    continue;
+                float max  = cell_max[offset];
 
                 if (max > score_threshold_non_sigmoid) {
+                    // The last class holding the maximum, as the per-cell scan picked.
+                    int target = num_class_ - 1;
+                    while (output_score[target * grid_l + offset] != max) {
+                        target--;
+                    }
 
                     float rect[4];
                     float before_dfl[dfl_len * 4];
-                    offset = j * grid_w + k;
                     for (int b = 0; b < dfl_len * 4; b++) {
                         before_dfl[b] = output_box[offset];
                         offset += grid_l;

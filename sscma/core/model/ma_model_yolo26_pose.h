@@ -19,6 +19,8 @@ private:
     int8_t box_idx_[3];
     int8_t cls_idx_[3];
     int8_t kpt_idx_[3];
+    std::vector<int8_t> cell_max_s8_;
+    std::vector<float> cell_max_f32_;
 
 protected:
     ma_err_t postprocess() override;

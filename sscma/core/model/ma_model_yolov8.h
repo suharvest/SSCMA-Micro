@@ -12,6 +12,8 @@ private:
     ma_tensor_t outputs_[6];
     int32_t num_record_;
     int32_t num_class_;
+    std::vector<int8_t> cell_max_s8_;
+    std::vector<float> cell_max_f32_;
 
 protected:
     ma_err_t postprocess() override;
